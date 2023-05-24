@@ -20,6 +20,10 @@ def generate_shot_names(actors):
     return shot_names
 
 
+def get_n_shots(shots, n):
+    return [shot for shot in shots if shot.count("-") == n]
+
+
 def draw_rect(rect, frame, color, thickness=2):
     cv2.rectangle(
         frame,
@@ -28,3 +32,25 @@ def draw_rect(rect, frame, color, thickness=2):
         color,
         thickness,
     )
+
+
+def rect_centre(rectangle_coords):
+    return np.array([rectangle_coords[0] + rectangle_coords[2],rectangle_coords[1] + rectangle_coords[3]])/ 2
+
+def actors_in(shot_name:str):
+    actors = set(shot_name.split('-')[:-1])
+    return actors
+
+def contained_actors(big_shot, small_shots):
+    filtered_shots = []
+    for shot in small_shots:
+        if actors_in(big_shot).union(actors_in(shot)) == actors_in(big_shot):
+            filtered_shots.append(shot)
+    return filtered_shots
+
+def join_unary_costs(cost_shot_a, cost_shot_b):
+    return cost_shot_a + cost_shot_b - abs(cost_shot_b - cost_shot_a)
+
+def get_rect_area(rect):
+    return max(0, (rect[2] - rect[0])) * max(0,(rect[3] - rect[1]))
+
