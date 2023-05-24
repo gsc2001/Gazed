@@ -6,6 +6,7 @@ import cv2
 import os
 from utils import *
 from configparser import ConfigParser, ExtendedInterpolation
+from tqdm import tqdm
 
 
 class Editor:
@@ -158,7 +159,8 @@ class Editor:
                 filtered_shots = contained_actors(shot, n_1_shots)
                 # sort on basis of x
                 filtered_shots.sort(key= lambda shot: rect_centre(self.shot_tracks[shot][timestep])[0])
-                # TODO: experiment with sorted one_shot_x
+
+                # TODO: experiment with sorted one_shot_x and sudheers sorting and for actors >= 3
 
                 left_one_shot = list((actors_in(shot) - actors_in(filtered_shots[1])))[0] + '-ms'
                 right_one_shot = list((actors_in(shot) - actors_in(filtered_shots[0])))[0] + '-ms'
@@ -236,6 +238,23 @@ class Editor:
             shift_cost += rhythm_cost
         
         return shift_cost
+    
+    def render_video(self,output_file_name):
+        writer = cv2.VideoWriter(output_file_name, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (640, 360))
+        for i in tqdm(range(self.timesteps)):
+            orig_frame = cv2.imread(self.frame_paths[i])
+            shot = self.shot_tracks[self.track[i]][i]
+            frame = crop_image(orig_frame, shot)
+            frame = cv2.resize(frame, (640, 360))
+            writer.write(frame)
+            cv2.imshow("frame", frame)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+        writer.release()
 
 
     def debug(self):

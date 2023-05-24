@@ -54,3 +54,5 @@ def join_unary_costs(cost_shot_a, cost_shot_b):
 def get_rect_area(rect):
     return max(0, (rect[2] - rect[0])) * max(0,(rect[3] - rect[1]))
 
+def crop_image(image, rect):
+    return image[int(rect[1]):int(rect[3]), int(rect[0]):int(rect[2])]
