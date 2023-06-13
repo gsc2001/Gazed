@@ -53,7 +53,7 @@ class Editor:
 
         self.frames_dir = self.config_reader.get("video", "frames")
         self.gaze_file = self.config_reader.get("video", "gaze")
-        self.fps = self.config_reader.getint("video", "fps")
+        self.fps = self.config_reader.getfloat("video", "fps")
         self.height = self.config_reader.getint("video", "height")
         self.width = self.config_reader.getint("video", "width")
         self.start_time = int(self.fps * self.config_reader.getint("parameters", "start_time"))
@@ -63,6 +63,8 @@ class Editor:
         )
         self.gaze_x_offset = self.config_reader.getint("parameters", "gazeXOffset")
         self.gaze_y_offset = self.config_reader.getint("parameters", "gazeYOffset")
+        self.gaze_norm_x = self.config_reader.getfloat("parameters", "gaze_norm_x")
+        self.gaze_norm_y = self.config_reader.getfloat("parameters", "gaze_norm_y")
     
     def load_cost_params(self):
         self.cost_params = {
@@ -104,6 +106,7 @@ class Editor:
         # choose best path
         min_cost = np.inf
         min_cost_shot = -1
+        print(self.timesteps)
         for shot in self.shot_names:
             if self.costs[shot][self.timesteps - 1] < min_cost:
                 min_cost = self.costs[shot][self.timesteps - 1]
@@ -134,7 +137,7 @@ class Editor:
 
             if centre[0] > 25 and centre[1] > 25:
                 for key in sorted(self.gazes.keys()):
-                    gaze = self.gazes[key][timestep + self.gaze_t_offset][:2] + np.array([self.gaze_x_offset, self.gaze_y_offset])
+                    gaze = self.gazes[key][timestep + self.gaze_t_offset][:2] * np.array([self.gaze_norm_x, self.gaze_norm_y]) + np.array([self.gaze_x_offset, self.gaze_y_offset])
                     if gaze[0] > self.width or gaze[1] > self.height:
                         continue
                     cost += np.linalg.norm(centre - gaze)
@@ -162,13 +165,15 @@ class Editor:
 
                 # TODO: experiment with sorted one_shot_x and sudheers sorting and for actors >= 3
 
-                left_one_shot = list((actors_in(shot) - actors_in(filtered_shots[1])))[0] + '-ms'
-                right_one_shot = list((actors_in(shot) - actors_in(filtered_shots[0])))[0] + '-ms'
+                # left_one_shot = list((actors_in(shot) - actors_in(filtered_shots[1])))[0] + '-ms'
+                # right_one_shot = list((actors_in(shot) - actors_in(filtered_shots[0])))[0] + '-ms'
 
-                left_cost = join_unary_costs(costs[left_one_shot], costs[filtered_shots[1]])
-                right_cost = join_unary_costs(costs[filtered_shots[0]], costs[right_one_shot])
+                # left_cost = join_unary_costs(costs[left_one_shot], costs[filtered_shots[1]])
+                # right_cost = join_unary_costs(costs[filtered_shots[0]], costs[right_one_shot])
 
-                costs[shot] = max(left_cost, right_cost)
+                # costs[shot] = max(left_cost, right_cost)
+                # print('shot: ', shot, 'filtered_shots: ', filtered_shots)
+                costs[shot] = join_unary_costs(costs[filtered_shots[0]], costs[filtered_shots[-1]])
         
         return costs
     
@@ -194,8 +199,9 @@ class Editor:
         if iou <= self.cost_params['overlap_alpha']:
             cost = 0
         elif iou >= self.cost_params['overlap_beta']:
-            slope = self.cost_params['overlap_mu'] / (self.cost_params['overlap_beta'] -  self.cost_params['overlap_alpha'])
-            cost = iou * slope - self.cost_params['overlap_alpha'] * slope
+            # slope = self.cost_params['overlap_mu'] / (self.cost_params['overlap_beta'] -  self.cost_params['overlap_alpha'])
+            # old_cost = iou * slope - self.cost_params['overlap_alpha'] * slope
+            cost = iou * self.cost_params['overlap_mu'] / self.cost_params['overlap_alpha']
         else:
             cost = self.cost_params['overlap_nu'] 
         
@@ -208,7 +214,7 @@ class Editor:
             costs = self.__find_unary_costs(i)
             for shot in self.shot_names:
                 assert shot in costs
-                self.unary_costs[shot][i] = -costs[shot]
+                self.unary_costs[shot][i] = -np.log(costs[shot])
     
     
     def shift_cost(self, prev_shot, cur_shot, timestep):

@@ -163,3 +163,4 @@ cython_debug/
 data/
 *.pkl
 *.mp4
+*.zip
