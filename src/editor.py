@@ -13,9 +13,15 @@ class Editor:
     def __init__(self, config_file: str) -> None:
         self.load_config(config_file)
         self.load_frames()
-        self.load_gaze()
+        if self.use_gaze:
+            self.load_gaze()
+        
+        if self.use_speaker:
+            self.load_speakers()
+
         self.load_actors_and_shots()
         self.load_cost_params()
+
 
         self.timesteps = min([len(val) for val in self.shot_tracks.values()])
         self.timesteps = min(self.timesteps, len(self.frame_paths))
@@ -23,8 +29,21 @@ class Editor:
         self.shot_duration = {shot: [0] * self.timesteps for shot in self.shot_names}
         self.parent = {shot: [-1] * self.timesteps for shot in self.shot_names}
         self.track = [None] * self.timesteps
+    
+    def time_to_frame(self, time):
+        return int(time * self.fps)
+    
+    def load_speakers(self):
+        self.speaker_file = self.config_reader.get("video", "speaker_annotations")
+        self.speakers = []
+        with open(self.speaker_file, "r") as f:
+            for line in f:
+                x = line.strip().split(' ')
+                x = [int(i) for i in x]
+                self.speakers.append(x)
 
     def load_gaze(self):
+        self.gaze_file = self.config_reader.get("video", "gaze")
         with open(self.gaze_file, "r") as f:
             gaze = yaml.safe_load(f)
         self.gazes = {}
@@ -50,9 +69,10 @@ class Editor:
         config_parser = ConfigParser(interpolation=ExtendedInterpolation())
         config_parser.read(config_file)
         self.config_reader = config_parser
+        self.use_gaze = self.config_reader.getboolean("parameters", "use_gaze")
+        self.use_speaker = self.config_reader.getboolean("parameters", "use_speaker")
 
         self.frames_dir = self.config_reader.get("video", "frames")
-        self.gaze_file = self.config_reader.get("video", "gaze")
         self.fps = self.config_reader.getfloat("video", "fps")
         self.height = self.config_reader.getint("video", "height")
         self.width = self.config_reader.getint("video", "width")
@@ -81,6 +101,8 @@ class Editor:
 
     def edit(self):
         self.calc_unary_costs()
+        with open('unary_costs.pkl', 'wb') as f:
+            pkl.dump(self.unary_costs, f)
         self.costs = {shot: [0] * self.timesteps for shot in self.shot_names}
         # create dp array with backtracking
         for i in range(self.start_time, self.timesteps):
@@ -125,9 +147,30 @@ class Editor:
 
         print('Done editing')
 
+    def __find_unary_costs_speaker(self, timestep):
+        one_shots = get_n_shots(self.shot_names, 1)
+        costs = {}
+
+        for shot in one_shots:
+            costs[shot] = 0
+            for i in range(len(self.actors)):
+                if self.actors[i] in actors_in(shot) and self.speakers[timestep][i] == 1:
+                    costs[shot] += 2
+
+        for n in range(2, len(self.actors) + 1):
+            n_shots = get_n_shots(self.shot_names, n)
+            n_1_shots = get_n_shots(self.shot_names, n - 1)
+
+            for shot in n_shots:
+                filtered_shots = contained_actors(shot, n_1_shots)
+                # sort on basis of x
+                filtered_shots.sort(key= lambda shot: rect_centre(self.shot_tracks[shot][timestep])[0])
+                costs[shot] = join_unary_costs(costs[filtered_shots[0]], costs[filtered_shots[-1]])
+        
+        return costs
     
 
-    def __find_unary_costs(self, timestep):
+    def __find_unary_costs_gaze(self, timestep):
         one_shots = get_n_shots(self.shot_names, 1)
         costs = {}
 
@@ -162,17 +205,6 @@ class Editor:
                 filtered_shots = contained_actors(shot, n_1_shots)
                 # sort on basis of x
                 filtered_shots.sort(key= lambda shot: rect_centre(self.shot_tracks[shot][timestep])[0])
-
-                # TODO: experiment with sorted one_shot_x and sudheers sorting and for actors >= 3
-
-                # left_one_shot = list((actors_in(shot) - actors_in(filtered_shots[1])))[0] + '-ms'
-                # right_one_shot = list((actors_in(shot) - actors_in(filtered_shots[0])))[0] + '-ms'
-
-                # left_cost = join_unary_costs(costs[left_one_shot], costs[filtered_shots[1]])
-                # right_cost = join_unary_costs(costs[filtered_shots[0]], costs[right_one_shot])
-
-                # costs[shot] = max(left_cost, right_cost)
-                # print('shot: ', shot, 'filtered_shots: ', filtered_shots)
                 costs[shot] = join_unary_costs(costs[filtered_shots[0]], costs[filtered_shots[-1]])
         
         return costs
@@ -208,13 +240,21 @@ class Editor:
         return cost
 
 
-
     def calc_unary_costs(self):
-        for i in range(self.timesteps):
-            costs = self.__find_unary_costs(i)
-            for shot in self.shot_names:
-                assert shot in costs
-                self.unary_costs[shot][i] = -np.log(costs[shot])
+        if self.use_speaker:
+            print('Adding speaker cost')
+            for i in range(self.timesteps):
+                costs = self.__find_unary_costs_speaker(i)
+                for shot in self.shot_names:
+                    assert shot in costs
+                    self.unary_costs[shot][i] += -costs[shot]
+
+        if self.use_gaze: 
+            for i in range(self.timesteps):
+                costs = self.__find_unary_costs_gaze(i)
+                for shot in self.shot_names:
+                    assert shot in costs
+                    self.unary_costs[shot][i] += -np.log(costs[shot])
     
     
     def shift_cost(self, prev_shot, cur_shot, timestep):
@@ -246,6 +286,7 @@ class Editor:
         return shift_cost
     
     def render_video(self,output_file_name):
+
         writer = cv2.VideoWriter(output_file_name, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (640, 360))
         for i in tqdm(range(self.timesteps)):
             orig_frame = cv2.imread(self.frame_paths[i])
@@ -261,6 +302,9 @@ class Editor:
         cv2.destroyAllWindows()
         cv2.waitKey(1)
         writer.release()
+
+        # add audio
+        
 
 
     def debug(self):
